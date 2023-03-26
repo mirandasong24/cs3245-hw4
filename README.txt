@@ -8,27 +8,6 @@ this assignment.
 
 == General Notes about this assignment ==
 
-The index.py file contains the build_index function. This function first takes all the files from 
-the training directory and processes each individual file. For each file, the terms in the file are 
-tokenized and stemmed. Then, the term frequency is calculated in the file which is subsequently used in the 
-document length calculation. At the end of each iterative loop, each document length is written into an 
-external document_lengths.txt file. The words in the file are also inputted into a term-docID dictionary whose 
-lifetime exists over the looping of all files in the training directory, and it maps each term to a list 
-of docIDs in which it exists. To build the index, after looping through each file in the training directory,
-the items from the term-docID pairs list are transferred into a python dictionary with terms and postings, 
-and the dictionary and postings in the python dictionary term_and_postings_dictionary are populated 
-into the corresponding file parameters.
-
-The search.py file contains firstly the run_search function. This function handles the overall logic 
-such as processing each query in the query file one by one and writing the ranked results to the output 
-file. It does so by following the pseudocode given in lecture for calculating cosine scores. The query_term_vector
-function calculates the vector entry for a query term using the tf.idf method. The doc_term_vector function
-calculates the vector entry for a document term using the tf method. The main run_search function calls 
-these two functions, multiplies the outputs together, and updates the scores for the docmuments accordingly.
-We then normalize the vector entries by dividing by the document lengths found in the document_lengths file.
-Finally, we sort the resulting scores by decreasing scores and increasing docID (in the case where multiple 
-documents receive the same score) and write the 10 docIDs with the highest scores to the output file.
-
 == Files included with this submission ==
 
 README.txt - contains information about the submission
@@ -61,3 +40,13 @@ We suggest that we should be graded as follows:
 
 Stack Overflow - Looking up syntax for working with files/dictionaries in Python
 Piazza - Posted questions online and used answers from prof, tutors, and peers
+
+THINGS TO DO
+-figure out how to handle csv files in Python
+-figure out how to handle both free text and boolean queries (only AND)
+
+THINGS TO INCLUDE 
+-ability to handle phrasal queries (using n-word indices or positional indices)
+-handle zones/fields (along with the standard notion of a document as a ordered set of words)
+-at least one query refinement technique (ex. psuedo relevant feedback, query expansion)
+-unique or unusual ideas to improve the system (make sure to document the ideas and their performance)
