@@ -50,4 +50,5 @@ THINGS TO INCLUDE
 -handle zones/fields (along with the standard notion of a document as a ordered set of words)
      -ex. increase the weighting of a query term if it's found in the title of a document
 -at least one query refinement technique (ex. psuedo relevant feedback, query expansion)
+     -use relevant documents given under the query to compute the centroid of these documents. then use the rocchio formula to recompute the term      weightings of the query vector (play around with the coefficients)
 -unique or unusual ideas to improve the system (make sure to document the ideas and their performance)
