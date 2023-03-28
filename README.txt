@@ -48,5 +48,6 @@ THINGS TO DO
 THINGS TO INCLUDE 
 -ability to handle phrasal queries (using n-word indices or positional indices)
 -handle zones/fields (along with the standard notion of a document as a ordered set of words)
+     -ex. increase the weighting of a query term if it's found in the title of a document
 -at least one query refinement technique (ex. psuedo relevant feedback, query expansion)
 -unique or unusual ideas to improve the system (make sure to document the ideas and their performance)
