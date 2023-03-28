@@ -47,6 +47,7 @@ THINGS TO DO
 
 THINGS TO INCLUDE 
 -ability to handle phrasal queries (using n-word indices or positional indices)
+     -store the positions of each term in the document (something like docID:position_list) and then when retrieving the postings lists for the phrase, use the AND operator to find documents that contain all the words in the phrase and then implement the added step of checking whether the words exist in the correct position/order in those documents
 -handle zones/fields (along with the standard notion of a document as a ordered set of words)
      -ex. increase the weighting of a query term if it's found in the title of a document
 -at least one query refinement technique (ex. psuedo relevant feedback, query expansion)
