@@ -169,6 +169,24 @@ def build_index(in_dir, out_dict, out_postings):
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
 
+    
+    # DEBUG: print postings list
+    with open(out_dict, 'rb') as f:
+        d = pickle.load(f)
+        # print(f'loaded dictionary {d}')
+        print(f'loaded dictionary {d}')
+        with open(out_postings, 'rb') as f:
+            print("printing loaded postings")
+            i = 0
+            for key, value in dictionary.items():
+                if i == 10:
+                    break
+                f.seek(value[1])
+                print(
+                    f'term={key}, df={value[0]}, pos={value[1]}, postings: {pickle.load(f)}')
+                i += 1
+            # f.seek(d[1][1])
+            # print(pickle.load(f))  # -> Item4
 
 input_directory = output_file_dictionary = output_file_postings = None
 
