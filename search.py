@@ -102,6 +102,8 @@ def run_search(dict_file, postings_file, queries_file, results_file):
     # output file for writing
     r = open(results_file, 'w')
 
+    # hello
+
     with open(queries_file, 'r') as f:
         # read each query
         for line in f:
