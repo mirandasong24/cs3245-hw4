@@ -4,9 +4,7 @@ term-id: (pointer, df)
 
 ### posting list
 
-(doc-id, term-freq, [title: 1,2,171,200 (positional indices)]
-content:300,450 (positional indices)]
-
+(doc-id, term-freq, [title: 1,2,171,200 (positional indices)], [content:300,450 (positional indices)])
 
 
 ### zones/fields
