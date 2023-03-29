@@ -1,4 +1,4 @@
-This is the README file for A0267818M-A0267993E's submission
+This is the README file for A0267818M-A0267993E-A0267998W's submission
 Email(s): e1100338@u.nus.edu, e1100705@u.nus.edu, e1100710@u.nus.edu
 
 == Python Version ==
