@@ -3,125 +3,130 @@ import re
 import nltk
 import sys
 import getopt
-from nltk.stem.porter import *
-import ast
+import pickle
+from collections import defaultdict
+import collections
 import math
-import operator
-import string
+from nltk.stem.porter import *
+
+DOC_LEN_FILENAME = 'doc-len.txt'
+DOCIDS_FILENAME = 'doc-ids.txt'
+K = 10
+
+
+class Search:
+    # define common variables that are accessed in search
+    def __init__(self, dictionary, filename_postings, docIDs=None, length=None):
+        self.dictionary = dictionary
+        self.FILENAME_POSTINGS = filename_postings
+        self.docIDs = docIDs
+        self.length = length
+
 
 def usage():
-    print("usage: " + sys.argv[0] + " -d dictionary-file -p postings-file -q file-of-queries -o output-file-of-results")
+    print("usage: " +
+          sys.argv[0] + " -d dictionary-file -p postings-file -q file-of-queries -o output-file-of-results")
+
+
+def get_w_tq(t, count, s):
+    # calculate w(t,q)
+
+    tf = count[t]                        # frequency of term in query
+    log_tf = 1 + math.log(tf, 10)
+
+    df, _ = s.dictionary[t]
+    N = len(s.docIDs)
+    idf = math.log(N/df, 10)
+
+    w_tq = log_tf * idf
+    return w_tq
+
+
+def cosine_score(tokens, s):
+    scores = defaultdict(float)
+    uniqueTokens = set(tokens)
+    count = collections.Counter(tokens)
+
+    # loop through all query terms
+    for t in uniqueTokens:
+        if t not in s.dictionary:
+            # if term not found, continue to next term
+            continue
+
+        # calculate w(t,q)
+        w_tq = get_w_tq(t, count, s)
+
+        # fetch postings list for t
+        _, pos = s.dictionary[t]
+        with open(s.FILENAME_POSTINGS, 'rb') as f:
+            f.seek(pos)
+            posting = pickle.load(f)
+
+            for doc, tf in posting:
+                w_td = 1 + math.log(tf, 10)     # calculate log tf for document
+                scores[doc] += (w_td * w_tq)
+
+    for d, score in scores.items():
+        scores[d] = score/s.length[d]
+
+    # sort by decreasing value (score) and then increasing key (docID)
+    res = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
+
+    res = [x[0] for x in res[:K]]
+    # for d in res:
+    #     print(f'document {d} has score {scores[d]}')
+    return res
+
 
 def run_search(dict_file, postings_file, queries_file, results_file):
     """
     using the given dictionary file and postings file,
     perform searching on the given queries file and output the results to a file
     """
-    print('running search on the queries...')
-    f2 = open(results_file, "w")
 
-    with open(dict_file) as f:
-        dictionary = f.read() # load dictionary into memory
-        dictionary = ast.literal_eval(dictionary) # parse the file into a python dictionary
-    
-    with open("document_lengths.txt") as f:
-        doc_lengths = f.read() # load document lengths into memory
-        doc_lengths = ast.literal_eval(doc_lengths) # parse the file into a python dictionary
+    # load dictionary into memory
+    with open(dict_file, 'rb') as f:
+        dictionary = pickle.load(f)
 
-    # open queries file and process each query
-    with open(queries_file) as f1:
-        lines = f1.readlines()
+        # add constants into Search
+        search = Search(dictionary, postings_file)
 
-        for query in lines:
-            scores = {}
-            processed_query = query.translate(str.maketrans('', '', string.punctuation)) # remove punctuation
+    # load full list of doc ids from index stage
+    with open(DOCIDS_FILENAME, 'rb') as f:
+        search.docIDs = pickle.load(f)
 
-            # get list of docIDs sorted by cosine similarity and write the top 10 to the output file
-            for term in processed_query.split():
-                term_vector = query_term_vector(query, term, len(doc_lengths), dictionary)
-                postings_list = get_postings_list(term, dict_file, postings_file)
+    # load Length[N] (map of document: vector length of document)
+    with open(DOC_LEN_FILENAME, 'rb') as f:
+        search.length = pickle.load(f)
 
-                for pair in postings_list: # update only scores of docIDs in postings list, other doc scores will be unaffected
-                    scores.update({pair[0]: scores.get(pair[0], 0) + (term_vector * doc_term_vector(pair))}) 
+    # output file for writing
+    r = open(results_file, 'w')
 
-            # perform normalization
-            for docID, score in scores.items():
-                scores[docID] = score / doc_lengths[str(docID)]
-            
-            scores = list(sorted(scores.items(), key=lambda x: (x[1], -x[0]) , reverse=True)) # sort by decreasing score, increasing docID
-            line = ""
+    with open(queries_file, 'r') as f:
+        # read each query
+        for line in f:
+            # split line by whitespace
+            terms = line.split()
+            tokens = []
 
-            if len(scores) < 10: # write every docID to output file if less than 10 valid results
-                for pair in scores:
-                    line += str(pair[0]) + " "
-            else:
-                for i in range(10): # write top 10 results to output file if more than 10 valid results
-                    line += str(scores[i][0]) + " "
-            
-            line.strip()
-            line += "\n"
+            # apply stemming as documents
+            for term in terms:
+                term = term.lower()
+                stemmer = PorterStemmer()                           # apply stemming
+                tokens.append(stemmer.stem(term))
 
-            f2.write(line)
-            
-    f2.close()
-    
-def get_postings_list(term, dict_file, postings_file):
-    # returns list of docIDs
-    postings = ""
-    num = 0
+            results = []
+            # try:
+            results = cosine_score(tokens, search)
+            # except KeyError as err:
+            #     # invalid query
+            #     r.write(f'\n')
+            #     continue
 
-    with open(dict_file) as f:
-        dictionary = f.read() # load dictionary into memory
-        dictionary = ast.literal_eval(dictionary) # parse the file into a python dictionary
-        stemmer = PorterStemmer()
-        term = stemmer.stem(term.lower()) # normalize the term to be consistent with the dictionary
-    
-    if term not in dictionary:
-        return [] 
+            # format output postings list
+            resStr = ' '.join([str(x) for x in results])
+            r.write(f'{resStr}\n')
 
-    byte_location = dictionary[term][0] # move to beginning of postings list of that term
-
-    with open(postings_file) as f:
-        f.seek(byte_location)
-        char = f.read(1) # skip the "[" character
-        char = f.read(1) # read first postings list char
-
-        while char != "]":
-            if char == "(":
-                num += 1
-            postings += char
-            char = f.read(1)
-    
-    if num > 1:
-        postings_list = list(ast.literal_eval(postings))
-    else:
-        postings_list = [tuple(ast.literal_eval(postings))] # need to use different logic to process postings lists with only one entry
-
-    return postings_list
-
-def query_term_vector(query, term, collection_size, dictionary):
-    # returns weighted vector entry for term
-
-    stemmer = PorterStemmer()
-    processed_query = query.translate(str.maketrans('', '', string.punctuation))
-
-    tf = 1 + math.log(processed_query.count(term), 10) # perform tf
-
-    term = stemmer.stem(term.lower())
-
-    # perform idf
-    if term in dictionary:
-        idf = math.log(collection_size / dictionary[term][1], 10)
-    else:
-        idf = 0
-    
-    return tf * idf
-
-def doc_term_vector(docID_tf_pair):
-    # returns weighted vector entry for term with that specific docID_tf pair
-    term_frequency = docID_tf_pair[1]
-    
-    return 1 + math.log(term_frequency, 10)
 
 dictionary_file = postings_file = file_of_queries = output_file_of_results = None
 
@@ -133,7 +138,7 @@ except getopt.GetoptError:
 
 for o, a in opts:
     if o == '-d':
-        dictionary_file  = a
+        dictionary_file = a
     elif o == '-p':
         postings_file = a
     elif o == '-q':
@@ -143,7 +148,7 @@ for o, a in opts:
     else:
         assert False, "unhandled option"
 
-if dictionary_file == None or postings_file == None or file_of_queries == None or file_of_output == None :
+if dictionary_file == None or postings_file == None or file_of_queries == None or file_of_output == None:
     usage()
     sys.exit(2)
 
