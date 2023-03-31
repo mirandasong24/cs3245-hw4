@@ -168,7 +168,6 @@ def build_index(in_dir, out_dict, out_postings):
     vectorDocLen = calc_tf(dictionary, docIDs, docsTermToCount)
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
-
     
     # DEBUG: print postings list
     with open(out_dict, 'rb') as f:
@@ -187,6 +186,9 @@ def build_index(in_dir, out_dict, out_postings):
                 i += 1
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4
+
+def merge_two_lists(lst1, lst2):
+    pass
 
 input_directory = output_file_dictionary = output_file_postings = None
 
