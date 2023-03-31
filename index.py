@@ -187,8 +187,24 @@ def build_index(in_dir, out_dict, out_postings):
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4
 
+# Merge two positional index lists and return a list of positional indices that have two consecutive terms
 def merge_two_lists(lst1, lst2):
-    pass
+    result = []
+    for item1 in lst1:
+        for item2 in lst2:
+            if item2 == item1 + 1:      # If the positional index in lst2 is exactly one after a positional index 
+                result.append(item2)    # in lst1, then add the second positional index to the result list
+    # Return a boolean along with the result list: If the result is empty, return False, otherwise, return True
+    if result == []:
+        return [False, result]          
+    else:
+        return [True, result]
+
+# Merge three positional index lists and return a list of positional indices that have three consecutive terms
+def merge_three_lists(lst1, lst2, lst3):
+    result1 = merge_two_lists(lst1, lst2)
+    result2 = merge_two_lists(result1[1], lst3)
+    return result2
 
 input_directory = output_file_dictionary = output_file_postings = None
 
