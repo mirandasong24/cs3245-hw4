@@ -17,11 +17,18 @@ from termidmap import TermIdMap
 import os
 import shutil
 import csv
+from enum import Enum
+from itertools import islice
 
 
 # temp file to store full-list of docIds to be used in search
 DOCIDS_FILENAME = 'doc-ids.txt'
 DOC_LEN_FILENAME = 'doc-len.txt'
+
+
+class Zone(Enum):
+    TITLE = 1
+    CONTENT = 2
 
 
 def usage():
@@ -34,25 +41,31 @@ def invert(block, termIdMap):
     Sorts term-docID pairs, and collect all pairs with same termID into postings list
     Returns inverted index, an array of (termId, Postings list).
     """
-    # block = list of (termId, docId, pos)
-    # # collect into list of (termId, docId, termFreq)
-    # sorted_block = []
-    # for key, termFreq in block.items():
-    #     sorted_block.append((*key, termFreq))
+    # block = (termId, docID, title pos, content pos)
+    # -1 if not a title, -1 if not a content
 
     # sort block by termID, then docID
     block.sort(key=lambda pair: (pair[0], pair[1]))
 
     # squash twice, first squash by positions
-    collected = defaultdict(list)
-    for termId, docID, pos in block:
-        collected[(termId, docID)].append(pos)
+    collected = OrderedDict()
+    for termId, docID, titlePos, contentPos in block:
+        if (termId, docID) not in collected:
+            collected[(termId, docID)] = defaultdict(list)
+
+        if titlePos != -1:
+            collected[(termId, docID)][Zone.TITLE].append(titlePos)
+        elif contentPos != -1:
+            collected[(termId, docID)][Zone.CONTENT].append(contentPos)
 
     # squash by term-id
     # collect same termIDs into dict structure: <key=termID, value=[docID, tf, [positions]]>
     res = defaultdict(list)
     for (termID, docID), positions in collected.items():
-        res[termID].append(Posting(int(docID), len(positions), positions))
+        df = len(positions[Zone.TITLE]) + len(positions[Zone.CONTENT])
+
+        res[termID].append(
+            Posting(int(docID), df, positions[Zone.TITLE], positions[Zone.CONTENT]))
 
     return res
 
@@ -128,8 +141,8 @@ def build_index(in_dir, out_dict, out_postings):
         csv_reader = csv.reader(csv_file, delimiter=',')
         i = 0
         for row in csv_reader:
-            # if i > 10:
-            #     break
+            if i > 1:            # DEBUG: change for however many documents
+                break
             doc.append(row)
             i += 1
         print(f'Processed {i} lines.')
@@ -137,41 +150,45 @@ def build_index(in_dir, out_dict, out_postings):
     print(doc[0])
     # assume is just name of file for now..
 
-    print("done here")
-
     for entry in doc:
         # "document_id","title","content","date_posted","court"
         docID, title, content, _, _ = entry
+        zones = {Zone.TITLE: title, Zone.CONTENT: content}
         if not docID.isnumeric():
             continue
         docIDs.append(int(docID))
         docID = int(docID)
 
-        if docID % 10 == 0:
-            print(f'processing document {docID}')
-        currDocTermToCount = defaultdict(int)
-        # tokenization
-        sents = nltk.sent_tokenize(content)         # sentence tokenizer
-        sents = [s.lower() for s in sents]           # case folding
+        for zone, info in zones.items():
+            # if docID % 10 == 0:
+            #     print(f'processing document {docID}')
+            currDocTermToCount = defaultdict(int)
+            # tokenization
+            sents = nltk.sent_tokenize(info)         # sentence tokenizer
+            sents = [s.lower() for s in sents]           # case folding
 
-        tokens = [word_tokenize(t) for t in sents]  # word tokenizer
-        # flatten array to words only
-        tokens = [j for sub in tokens for j in sub]
+            tokens = [word_tokenize(t) for t in sents]  # word tokenizer
+            # flatten array to words only
+            tokens = [j for sub in tokens for j in sub]
 
-        stemmer = PorterStemmer()                    # apply stemming
-        tokens = [stemmer.stem(t) for t in tokens]
+            stemmer = PorterStemmer()                    # apply stemming
+            tokens = [stemmer.stem(t) for t in tokens]
 
-        pos = 0
-        for term in tokens:
-            # add mapping of term -> termId in termIdMap
-            termID = termIdMap.add(term)
-            block.append((termID, docID, pos))
-            currDocTermToCount[term] += 1
-            pos += 1
+            pos = 0
+            for term in tokens:
+                # add mapping of term -> termId in termIdMap
+                termID = termIdMap.add(term)
+
+                if zone == Zone.TITLE:
+                    block.append((termID, docID, pos, -1))
+                elif zone == Zone.CONTENT:
+                    block.append((termID, docID, -1, pos))
+
+                currDocTermToCount[term] += 1
+                pos += 1
 
         docsTermToCount[docID] = currDocTermToCount
 
-    print("done")
     invertedIndex = invert(block, termIdMap)
 
     dictionary, postings = post_processing(termIdMap, invertedIndex)
@@ -206,7 +223,9 @@ def build_index(in_dir, out_dict, out_postings):
     with open(out_dict, 'rb') as f:
         d = pickle.load(f)
         # print(f'loaded dictionary {d}')
-        print(f'loaded dictionary {d}')
+        n_items = list(islice(d.items(), 10))
+        print(f'Loaded dictionary sample for first 10 items{n_items}')
+        print('\n\n\n')
         with open(out_postings, 'rb') as f:
             print("printing loaded postings")
             i = 0
@@ -214,8 +233,25 @@ def build_index(in_dir, out_dict, out_postings):
                 if i == 10:
                     break
                 f.seek(value[1])
-                print(
-                    f'term={key}, df={value[0]}, pointer={value[1]}, postings: {pickle.load(f)}')
+                postings = pickle.load(f)
+                seen_title = False
+
+                s = f'term={key}, df={value[0]}, pointer={value[1]}'
+
+                for p in postings:
+                    print(p)
+
+                # DEBUG: print postings for title of 1st document
+                # for p in postings:
+                #     if p.title:
+                #         seen_title = True
+
+                # if seen_title:
+                #     print(s)
+                #     for p in postings:
+                #         if p.docID == 246391:
+                #             print(p)
+                #     print('\n')
                 i += 1
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4

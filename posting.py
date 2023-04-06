@@ -1,12 +1,13 @@
 # each posting contains a number (docID) and an optional skip pointer
 class Posting:
-    def __init__(self, docID, tf=None, positions=[]):
+    def __init__(self, docID, tf=None, title=[], content=[]):
         self.docID = docID
         self.tf = tf
-        self.positions = positions
+        self.title = title
+        self.content = content
 
     def __repr__(self):
-        return f'({self.docID, self.tf, self.positions})'
+        return f'(docID={self.docID}, tf={self.tf}, title={self.title}, content={self.content})'
 
     # def __lt__(self, other):
     #     return self.num < other.num
