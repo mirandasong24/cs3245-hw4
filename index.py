@@ -24,6 +24,7 @@ from itertools import islice
 # temp file to store full-list of docIds to be used in search
 DOCIDS_FILENAME = 'doc-ids.txt'
 DOC_LEN_FILENAME = 'doc-len.txt'
+DOC_VECTORS_FILENAME = 'doc-vector.txt'
 
 
 class Zone(Enum):
@@ -92,34 +93,29 @@ def calc_tf(dictionary, docIDs, docsTermToCount):
     # dictionary: <key=term, val=(df, ptr_to_postings)>
     print(f'Calculating document vectors: printing progress updates:')
     vectorDocLen = {}
+    docVec = {}                     # document vector for RF calc
     # loop through all documents
     for doc in docIDs:
         if doc % 200 == 0:
             print(f'calculating vector for document {doc}')
         # loop through vocab to create n-d vector
-        vec = []
+        vec = {}
         termToCount = docsTermToCount[doc]
         for term in dictionary.keys():
             # 1 + log10(tf) if tf > 0
             if term in termToCount:
-                vec.append(1 + math.log(termToCount[term], 10))
-            # 0 otherwise
-            else:
-                vec.append(0)
+                vec[term] = 1 + math.log(termToCount[term], 10)
+            # 0 otherwise, don't add to vec
 
         res = 0
-        for i in vec:
-            if i == 0:
-                continue
+        for i in vec.values():
             res += i**2
 
         vectorDocLen[doc] = math.sqrt(res)
-        # # calculate length of vector
-        # vec = [i for i in vec if i != 0]
-        # vectorDocLen[doc] = math.sqrt(sum(w**2 for w in vec))
+        docVec[doc] = vec
 
     # print(vectorDocLen)
-    return vectorDocLen
+    return (vectorDocLen, docVec)
 
 
 def build_index(in_dir, out_dict, out_postings):
@@ -141,7 +137,7 @@ def build_index(in_dir, out_dict, out_postings):
         csv_reader = csv.reader(csv_file, delimiter=',')
         i = 0
         for row in csv_reader:
-            if i > 1:            # DEBUG: change for however many documents
+            if i > 10:            # DEBUG: change for however many documents
                 break
             doc.append(row)
             i += 1
@@ -215,9 +211,12 @@ def build_index(in_dir, out_dict, out_postings):
 
     # calculate LENGTHS[N], which is length of each document vector
     # and write out to file for search step
-    vectorDocLen = calc_tf(dictionary, docIDs, docsTermToCount)
+    vectorDocLen, docVec = calc_tf(dictionary, docIDs, docsTermToCount)
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
+
+    with open(DOC_VECTORS_FILENAME, 'wb') as f:
+        pickle.dump(docVec, f)
 
     # DEBUG: print postings list
     with open(out_dict, 'rb') as f:
@@ -227,7 +226,7 @@ def build_index(in_dir, out_dict, out_postings):
         print(f'Loaded dictionary sample for first 10 items{n_items}')
         print('\n\n\n')
         with open(out_postings, 'rb') as f:
-            print("printing loaded postings")
+            print(">>> Printing first 10 loaded postings")
             i = 0
             for key, value in dictionary.items():
                 if i == 10:
@@ -236,10 +235,11 @@ def build_index(in_dir, out_dict, out_postings):
                 postings = pickle.load(f)
                 seen_title = False
 
-                s = f'term={key}, df={value[0]}, pointer={value[1]}'
+                print(f'term={key}, df={value[0]}, pointer={value[1]}')
 
                 for p in postings:
                     print(p)
+                print('')
 
                 # DEBUG: print postings for title of 1st document
                 # for p in postings:
@@ -255,6 +255,17 @@ def build_index(in_dir, out_dict, out_postings):
                 i += 1
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4
+
+    # DEBUG: print document vectors list
+    print('')
+    with open(DOC_VECTORS_FILENAME, 'rb') as f:
+        d = pickle.load(f)
+        for k, v in d.items():
+            items = list(islice(v.items(), 10))
+            print(
+                f'>>> Loaded doc-vector.txt sample for first 10 items in document 1: {items}')
+            print('')
+            break
 
 
 input_directory = output_file_dictionary = output_file_postings = None
