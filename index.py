@@ -16,6 +16,7 @@ from posting import Posting
 from termidmap import TermIdMap
 import os
 import shutil
+import csv
 
 
 # temp file to store full-list of docIds to be used in search
@@ -33,21 +34,27 @@ def invert(block, termIdMap):
     Sorts term-docID pairs, and collect all pairs with same termID into postings list
     Returns inverted index, an array of (termId, Postings list).
     """
-
-    # collect into list of (termId, docId, termFreq)
-    sorted_block = []
-    for key, termFreq in block.items():
-        sorted_block.append((*key, termFreq))
+    # block = list of (termId, docId, pos)
+    # # collect into list of (termId, docId, termFreq)
+    # sorted_block = []
+    # for key, termFreq in block.items():
+    #     sorted_block.append((*key, termFreq))
 
     # sort block by termID, then docID
-    sorted_block.sort(key=lambda pair: (pair[0], pair[1]))
+    block.sort(key=lambda pair: (pair[0], pair[1]))
 
-    # collect same termIDs into dict structure: <key=termID, value=postingsList>
+    # squash twice, first squash by positions
     collected = defaultdict(list)
-    for termID, docID, tf in sorted_block:
-        collected[termID].append((int(docID), tf))
+    for termId, docID, pos in block:
+        collected[(termId, docID)].append(pos)
 
-    return collected
+    # squash by term-id
+    # collect same termIDs into dict structure: <key=termID, value=[docID, tf, [positions]]>
+    res = defaultdict(list)
+    for (termID, docID), positions in collected.items():
+        res[termID].append(Posting(int(docID), len(positions), positions))
+
+    return res
 
 
 def post_processing(termIdMap, block):
@@ -56,14 +63,14 @@ def post_processing(termIdMap, block):
     res_postings = []
 
     # Post Processing Steps
-    for termID, posting in block.items():
-        res_dictionary[termIdMap.getTerm(termID)] = posting
+    for termID, plist in block.items():
+        res_dictionary[termIdMap.getTerm(termID)] = plist
 
     od = OrderedDict(sorted(res_dictionary.items()))
 
-    for termID, posting in od.items():
-        od[termID] = len(posting)
-        res_postings.append(posting)
+    for termID, plist in od.items():
+        od[termID] = len(plist)
+        res_postings.append(plist)
 
     return od, res_postings
 
@@ -108,37 +115,63 @@ def build_index(in_dir, out_dict, out_postings):
     then output the dictionary file and postings file
     """
     print("Indexing...")
-    block = defaultdict(int)
+    csv.field_size_limit(sys.maxsize)
+    block = []
     termIdMap = TermIdMap()
     docIDs = []                 # save full list of docIDs for NOT queries in search
     docsTermToCount = {}        # for each docID, saves the terms and counts of terms
     # to be used for computing document vector
 
-    for docID in sorted(os.listdir(in_dir), key=int):
+    doc = []
+    # parse csv
+    with open(in_dir) as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        i = 0
+        for row in csv_reader:
+            # if i > 10:
+            #     break
+            doc.append(row)
+            i += 1
+        print(f'Processed {i} lines.')
+
+    print(doc[0])
+    # assume is just name of file for now..
+
+    print("done here")
+
+    for entry in doc:
+        # "document_id","title","content","date_posted","court"
+        docID, title, content, _, _ = entry
+        if not docID.isnumeric():
+            continue
         docIDs.append(int(docID))
-        with open(os.path.join(in_dir, docID), 'r') as f:  # open in readonly mode
+        docID = int(docID)
 
-            docID = int(docID)
-            currDocTermToCount = defaultdict(int)
-            # tokenization
-            sents = nltk.sent_tokenize(f.read())         # sentence tokenizer
-            sents = [s.lower() for s in sents]           # case folding
+        if docID % 10 == 0:
+            print(f'processing document {docID}')
+        currDocTermToCount = defaultdict(int)
+        # tokenization
+        sents = nltk.sent_tokenize(content)         # sentence tokenizer
+        sents = [s.lower() for s in sents]           # case folding
 
-            tokens = [word_tokenize(t) for t in sents]  # word tokenizer
-            # flatten array to words only
-            tokens = [j for sub in tokens for j in sub]
+        tokens = [word_tokenize(t) for t in sents]  # word tokenizer
+        # flatten array to words only
+        tokens = [j for sub in tokens for j in sub]
 
-            stemmer = PorterStemmer()                    # apply stemming
-            tokens = [stemmer.stem(t) for t in tokens]
+        stemmer = PorterStemmer()                    # apply stemming
+        tokens = [stemmer.stem(t) for t in tokens]
 
-            for term in tokens:
-                # add mapping of term -> termId in termIdMap
-                termID = termIdMap.add(term)
-                block[(termID, docID)] += 1
-                currDocTermToCount[term] += 1
+        pos = 0
+        for term in tokens:
+            # add mapping of term -> termId in termIdMap
+            termID = termIdMap.add(term)
+            block.append((termID, docID, pos))
+            currDocTermToCount[term] += 1
+            pos += 1
 
-            docsTermToCount[docID] = currDocTermToCount
+        docsTermToCount[docID] = currDocTermToCount
 
+    print("done")
     invertedIndex = invert(block, termIdMap)
 
     dictionary, postings = post_processing(termIdMap, invertedIndex)
@@ -169,7 +202,6 @@ def build_index(in_dir, out_dict, out_postings):
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
 
-    
     # DEBUG: print postings list
     with open(out_dict, 'rb') as f:
         d = pickle.load(f)
@@ -183,10 +215,11 @@ def build_index(in_dir, out_dict, out_postings):
                     break
                 f.seek(value[1])
                 print(
-                    f'term={key}, df={value[0]}, pos={value[1]}, postings: {pickle.load(f)}')
+                    f'term={key}, df={value[0]}, pointer={value[1]}, postings: {pickle.load(f)}')
                 i += 1
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4
+
 
 input_directory = output_file_dictionary = output_file_postings = None
 
