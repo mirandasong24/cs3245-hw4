@@ -16,11 +16,20 @@ from posting import Posting
 from termidmap import TermIdMap
 import os
 import shutil
+import csv
+from enum import Enum
+from itertools import islice
 
 
 # temp file to store full-list of docIds to be used in search
 DOCIDS_FILENAME = 'doc-ids.txt'
 DOC_LEN_FILENAME = 'doc-len.txt'
+DOC_VECTORS_FILENAME = 'doc-vector.txt'
+
+
+class Zone(Enum):
+    TITLE = 1
+    CONTENT = 2
 
 
 def usage():
@@ -33,21 +42,33 @@ def invert(block, termIdMap):
     Sorts term-docID pairs, and collect all pairs with same termID into postings list
     Returns inverted index, an array of (termId, Postings list).
     """
-
-    # collect into list of (termId, docId, termFreq)
-    sorted_block = []
-    for key, termFreq in block.items():
-        sorted_block.append((*key, termFreq))
+    # block = (termId, docID, title pos, content pos)
+    # -1 if not a title, -1 if not a content
 
     # sort block by termID, then docID
-    sorted_block.sort(key=lambda pair: (pair[0], pair[1]))
+    block.sort(key=lambda pair: (pair[0], pair[1]))
 
-    # collect same termIDs into dict structure: <key=termID, value=postingsList>
-    collected = defaultdict(list)
-    for termID, docID, tf in sorted_block:
-        collected[termID].append((int(docID), tf))
+    # squash twice, first squash by positions
+    collected = OrderedDict()
+    for termId, docID, titlePos, contentPos in block:
+        if (termId, docID) not in collected:
+            collected[(termId, docID)] = defaultdict(list)
 
-    return collected
+        if titlePos != -1:
+            collected[(termId, docID)][Zone.TITLE].append(titlePos)
+        elif contentPos != -1:
+            collected[(termId, docID)][Zone.CONTENT].append(contentPos)
+
+    # squash by term-id
+    # collect same termIDs into dict structure: <key=termID, value=[docID, tf, [positions]]>
+    res = defaultdict(list)
+    for (termID, docID), positions in collected.items():
+        df = len(positions[Zone.TITLE]) + len(positions[Zone.CONTENT])
+
+        res[termID].append(
+            Posting(int(docID), df, positions[Zone.TITLE], positions[Zone.CONTENT]))
+
+    return res
 
 
 def post_processing(termIdMap, block):
@@ -56,14 +77,14 @@ def post_processing(termIdMap, block):
     res_postings = []
 
     # Post Processing Steps
-    for termID, posting in block.items():
-        res_dictionary[termIdMap.getTerm(termID)] = posting
+    for termID, plist in block.items():
+        res_dictionary[termIdMap.getTerm(termID)] = plist
 
     od = OrderedDict(sorted(res_dictionary.items()))
 
-    for termID, posting in od.items():
-        od[termID] = len(posting)
-        res_postings.append(posting)
+    for termID, plist in od.items():
+        od[termID] = len(plist)
+        res_postings.append(plist)
 
     return od, res_postings
 
@@ -72,34 +93,29 @@ def calc_tf(dictionary, docIDs, docsTermToCount):
     # dictionary: <key=term, val=(df, ptr_to_postings)>
     print(f'Calculating document vectors: printing progress updates:')
     vectorDocLen = {}
+    docVec = {}                     # document vector for RF calc
     # loop through all documents
     for doc in docIDs:
         if doc % 200 == 0:
             print(f'calculating vector for document {doc}')
         # loop through vocab to create n-d vector
-        vec = []
+        vec = {}
         termToCount = docsTermToCount[doc]
         for term in dictionary.keys():
             # 1 + log10(tf) if tf > 0
             if term in termToCount:
-                vec.append(1 + math.log(termToCount[term], 10))
-            # 0 otherwise
-            else:
-                vec.append(0)
+                vec[term] = 1 + math.log(termToCount[term], 10)
+            # 0 otherwise, don't add to vec
 
         res = 0
-        for i in vec:
-            if i == 0:
-                continue
+        for i in vec.values():
             res += i**2
 
         vectorDocLen[doc] = math.sqrt(res)
-        # # calculate length of vector
-        # vec = [i for i in vec if i != 0]
-        # vectorDocLen[doc] = math.sqrt(sum(w**2 for w in vec))
+        docVec[doc] = vec
 
     # print(vectorDocLen)
-    return vectorDocLen
+    return (vectorDocLen, docVec)
 
 
 def build_index(in_dir, out_dict, out_postings):
@@ -108,20 +124,43 @@ def build_index(in_dir, out_dict, out_postings):
     then output the dictionary file and postings file
     """
     print("Indexing...")
-    block = defaultdict(int)
+    csv.field_size_limit(sys.maxsize)
+    block = []
     termIdMap = TermIdMap()
     docIDs = []                 # save full list of docIDs for NOT queries in search
     docsTermToCount = {}        # for each docID, saves the terms and counts of terms
     # to be used for computing document vector
 
-    for docID in sorted(os.listdir(in_dir), key=int):
-        docIDs.append(int(docID))
-        with open(os.path.join(in_dir, docID), 'r') as f:  # open in readonly mode
+    doc = []
+    # parse csv
+    with open(in_dir) as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        i = 0
+        for row in csv_reader:
+            if i > 10:            # DEBUG: change for however many documents
+                break
+            doc.append(row)
+            i += 1
+        print(f'Processed {i} lines.')
 
-            docID = int(docID)
+    print(doc[0])
+    # assume is just name of file for now..
+
+    for entry in doc:
+        # "document_id","title","content","date_posted","court"
+        docID, title, content, _, _ = entry
+        zones = {Zone.TITLE: title, Zone.CONTENT: content}
+        if not docID.isnumeric():
+            continue
+        docIDs.append(int(docID))
+        docID = int(docID)
+
+        for zone, info in zones.items():
+            # if docID % 10 == 0:
+            #     print(f'processing document {docID}')
             currDocTermToCount = defaultdict(int)
             # tokenization
-            sents = nltk.sent_tokenize(f.read())         # sentence tokenizer
+            sents = nltk.sent_tokenize(info)         # sentence tokenizer
             sents = [s.lower() for s in sents]           # case folding
 
             tokens = [word_tokenize(t) for t in sents]  # word tokenizer
@@ -131,13 +170,20 @@ def build_index(in_dir, out_dict, out_postings):
             stemmer = PorterStemmer()                    # apply stemming
             tokens = [stemmer.stem(t) for t in tokens]
 
+            pos = 0
             for term in tokens:
                 # add mapping of term -> termId in termIdMap
                 termID = termIdMap.add(term)
-                block[(termID, docID)] += 1
-                currDocTermToCount[term] += 1
 
-            docsTermToCount[docID] = currDocTermToCount
+                if zone == Zone.TITLE:
+                    block.append((termID, docID, pos, -1))
+                elif zone == Zone.CONTENT:
+                    block.append((termID, docID, -1, pos))
+
+                currDocTermToCount[term] += 1
+                pos += 1
+
+        docsTermToCount[docID] = currDocTermToCount
 
     invertedIndex = invert(block, termIdMap)
 
@@ -165,28 +211,62 @@ def build_index(in_dir, out_dict, out_postings):
 
     # calculate LENGTHS[N], which is length of each document vector
     # and write out to file for search step
-    vectorDocLen = calc_tf(dictionary, docIDs, docsTermToCount)
+    vectorDocLen, docVec = calc_tf(dictionary, docIDs, docsTermToCount)
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
 
-    
+    with open(DOC_VECTORS_FILENAME, 'wb') as f:
+        pickle.dump(docVec, f)
+
     # DEBUG: print postings list
     with open(out_dict, 'rb') as f:
         d = pickle.load(f)
         # print(f'loaded dictionary {d}')
-        print(f'loaded dictionary {d}')
+        n_items = list(islice(d.items(), 10))
+        print(f'Loaded dictionary sample for first 10 items{n_items}')
+        print('\n\n\n')
         with open(out_postings, 'rb') as f:
-            print("printing loaded postings")
+            print(">>> Printing first 10 loaded postings")
             i = 0
             for key, value in dictionary.items():
                 if i == 10:
                     break
                 f.seek(value[1])
-                print(
-                    f'term={key}, df={value[0]}, pos={value[1]}, postings: {pickle.load(f)}')
+                postings = pickle.load(f)
+                seen_title = False
+
+                print(f'term={key}, df={value[0]}, pointer={value[1]}')
+
+                for p in postings:
+                    print(p)
+                print('')
+
+                # DEBUG: print postings for title of 1st document
+                # for p in postings:
+                #     if p.title:
+                #         seen_title = True
+
+                # if seen_title:
+                #     print(s)
+                #     for p in postings:
+                #         if p.docID == 246391:
+                #             print(p)
+                #     print('\n')
                 i += 1
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4
+
+    # DEBUG: print document vectors list
+    print('')
+    with open(DOC_VECTORS_FILENAME, 'rb') as f:
+        d = pickle.load(f)
+        for k, v in d.items():
+            items = list(islice(v.items(), 10))
+            print(
+                f'>>> Loaded doc-vector.txt sample for first 10 items in document 1: {items}')
+            print('')
+            break
+
 
 input_directory = output_file_dictionary = output_file_postings = None
 
