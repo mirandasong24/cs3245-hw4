@@ -16,20 +16,11 @@ from posting import Posting
 from termidmap import TermIdMap
 import os
 import shutil
-import csv
-from enum import Enum
-from itertools import islice
 
 
 # temp file to store full-list of docIds to be used in search
 DOCIDS_FILENAME = 'doc-ids.txt'
 DOC_LEN_FILENAME = 'doc-len.txt'
-DOC_VECTORS_FILENAME = 'doc-vector.txt'
-
-
-class Zone(Enum):
-    TITLE = 1
-    CONTENT = 2
 
 
 def usage():
@@ -42,33 +33,21 @@ def invert(block, termIdMap):
     Sorts term-docID pairs, and collect all pairs with same termID into postings list
     Returns inverted index, an array of (termId, Postings list).
     """
-    # block = (termId, docID, title pos, content pos)
-    # -1 if not a title, -1 if not a content
+
+    # collect into list of (termId, docId, termFreq)
+    sorted_block = []
+    for key, termFreq in block.items():
+        sorted_block.append((*key, termFreq))
 
     # sort block by termID, then docID
-    block.sort(key=lambda pair: (pair[0], pair[1]))
+    sorted_block.sort(key=lambda pair: (pair[0], pair[1]))
 
-    # squash twice, first squash by positions
-    collected = OrderedDict()
-    for termId, docID, titlePos, contentPos in block:
-        if (termId, docID) not in collected:
-            collected[(termId, docID)] = defaultdict(list)
+    # collect same termIDs into dict structure: <key=termID, value=postingsList>
+    collected = defaultdict(list)
+    for termID, docID, tf in sorted_block:
+        collected[termID].append((int(docID), tf))
 
-        if titlePos != -1:
-            collected[(termId, docID)][Zone.TITLE].append(titlePos)
-        elif contentPos != -1:
-            collected[(termId, docID)][Zone.CONTENT].append(contentPos)
-
-    # squash by term-id
-    # collect same termIDs into dict structure: <key=termID, value=[docID, tf, [positions]]>
-    res = defaultdict(list)
-    for (termID, docID), positions in collected.items():
-        df = len(positions[Zone.TITLE]) + len(positions[Zone.CONTENT])
-
-        res[termID].append(
-            Posting(int(docID), df, positions[Zone.TITLE], positions[Zone.CONTENT]))
-
-    return res
+    return collected
 
 
 def post_processing(termIdMap, block):
@@ -77,14 +56,14 @@ def post_processing(termIdMap, block):
     res_postings = []
 
     # Post Processing Steps
-    for termID, plist in block.items():
-        res_dictionary[termIdMap.getTerm(termID)] = plist
+    for termID, posting in block.items():
+        res_dictionary[termIdMap.getTerm(termID)] = posting
 
     od = OrderedDict(sorted(res_dictionary.items()))
 
-    for termID, plist in od.items():
-        od[termID] = len(plist)
-        res_postings.append(plist)
+    for termID, posting in od.items():
+        od[termID] = len(posting)
+        res_postings.append(posting)
 
     return od, res_postings
 
@@ -93,29 +72,34 @@ def calc_tf(dictionary, docIDs, docsTermToCount):
     # dictionary: <key=term, val=(df, ptr_to_postings)>
     print(f'Calculating document vectors: printing progress updates:')
     vectorDocLen = {}
-    docVec = {}                     # document vector for RF calc
     # loop through all documents
     for doc in docIDs:
         if doc % 200 == 0:
             print(f'calculating vector for document {doc}')
         # loop through vocab to create n-d vector
-        vec = {}
+        vec = []
         termToCount = docsTermToCount[doc]
         for term in dictionary.keys():
             # 1 + log10(tf) if tf > 0
             if term in termToCount:
-                vec[term] = 1 + math.log(termToCount[term], 10)
-            # 0 otherwise, don't add to vec
+                vec.append(1 + math.log(termToCount[term], 10))
+            # 0 otherwise
+            else:
+                vec.append(0)
 
         res = 0
-        for i in vec.values():
+        for i in vec:
+            if i == 0:
+                continue
             res += i**2
 
         vectorDocLen[doc] = math.sqrt(res)
-        docVec[doc] = vec
+        # # calculate length of vector
+        # vec = [i for i in vec if i != 0]
+        # vectorDocLen[doc] = math.sqrt(sum(w**2 for w in vec))
 
     # print(vectorDocLen)
-    return (vectorDocLen, docVec)
+    return vectorDocLen
 
 
 def build_index(in_dir, out_dict, out_postings):
@@ -124,43 +108,20 @@ def build_index(in_dir, out_dict, out_postings):
     then output the dictionary file and postings file
     """
     print("Indexing...")
-    csv.field_size_limit(sys.maxsize)
-    block = []
+    block = defaultdict(int)
     termIdMap = TermIdMap()
     docIDs = []                 # save full list of docIDs for NOT queries in search
     docsTermToCount = {}        # for each docID, saves the terms and counts of terms
     # to be used for computing document vector
 
-    doc = []
-    # parse csv
-    with open(in_dir) as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter=',')
-        i = 0
-        for row in csv_reader:
-            if i > 10:            # DEBUG: change for however many documents
-                break
-            doc.append(row)
-            i += 1
-        print(f'Processed {i} lines.')
-
-    print(doc[0])
-    # assume is just name of file for now..
-
-    for entry in doc:
-        # "document_id","title","content","date_posted","court"
-        docID, title, content, _, _ = entry
-        zones = {Zone.TITLE: title, Zone.CONTENT: content}
-        if not docID.isnumeric():
-            continue
+    for docID in sorted(os.listdir(in_dir), key=int):
         docIDs.append(int(docID))
-        docID = int(docID)
+        with open(os.path.join(in_dir, docID), 'r') as f:  # open in readonly mode
 
-        for zone, info in zones.items():
-            # if docID % 10 == 0:
-            #     print(f'processing document {docID}')
+            docID = int(docID)
             currDocTermToCount = defaultdict(int)
             # tokenization
-            sents = nltk.sent_tokenize(info)         # sentence tokenizer
+            sents = nltk.sent_tokenize(f.read())         # sentence tokenizer
             sents = [s.lower() for s in sents]           # case folding
 
             tokens = [word_tokenize(t) for t in sents]  # word tokenizer
@@ -170,20 +131,13 @@ def build_index(in_dir, out_dict, out_postings):
             stemmer = PorterStemmer()                    # apply stemming
             tokens = [stemmer.stem(t) for t in tokens]
 
-            pos = 0
             for term in tokens:
                 # add mapping of term -> termId in termIdMap
                 termID = termIdMap.add(term)
-
-                if zone == Zone.TITLE:
-                    block.append((termID, docID, pos, -1))
-                elif zone == Zone.CONTENT:
-                    block.append((termID, docID, -1, pos))
-
+                block[(termID, docID)] += 1
                 currDocTermToCount[term] += 1
-                pos += 1
 
-        docsTermToCount[docID] = currDocTermToCount
+            docsTermToCount[docID] = currDocTermToCount
 
     invertedIndex = invert(block, termIdMap)
 
@@ -211,62 +165,100 @@ def build_index(in_dir, out_dict, out_postings):
 
     # calculate LENGTHS[N], which is length of each document vector
     # and write out to file for search step
-    vectorDocLen, docVec = calc_tf(dictionary, docIDs, docsTermToCount)
+    vectorDocLen = calc_tf(dictionary, docIDs, docsTermToCount)
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
-
-    with open(DOC_VECTORS_FILENAME, 'wb') as f:
-        pickle.dump(docVec, f)
-
+    
     # DEBUG: print postings list
     with open(out_dict, 'rb') as f:
         d = pickle.load(f)
         # print(f'loaded dictionary {d}')
-        n_items = list(islice(d.items(), 10))
-        print(f'Loaded dictionary sample for first 10 items{n_items}')
-        print('\n\n\n')
+        print(f'loaded dictionary {d}')
         with open(out_postings, 'rb') as f:
-            print(">>> Printing first 10 loaded postings")
+            print("printing loaded postings")
             i = 0
             for key, value in dictionary.items():
                 if i == 10:
                     break
                 f.seek(value[1])
-                postings = pickle.load(f)
-                seen_title = False
-
-                print(f'term={key}, df={value[0]}, pointer={value[1]}')
-
-                for p in postings:
-                    print(p)
-                print('')
-
-                # DEBUG: print postings for title of 1st document
-                # for p in postings:
-                #     if p.title:
-                #         seen_title = True
-
-                # if seen_title:
-                #     print(s)
-                #     for p in postings:
-                #         if p.docID == 246391:
-                #             print(p)
-                #     print('\n')
+                print(
+                    f'term={key}, df={value[0]}, pos={value[1]}, postings: {pickle.load(f)}')
                 i += 1
             # f.seek(d[1][1])
             # print(pickle.load(f))  # -> Item4
 
-    # DEBUG: print document vectors list
-    print('')
-    with open(DOC_VECTORS_FILENAME, 'rb') as f:
-        d = pickle.load(f)
-        for k, v in d.items():
-            items = list(islice(v.items(), 10))
-            print(
-                f'>>> Loaded doc-vector.txt sample for first 10 items in document 1: {items}')
-            print('')
-            break
+# Finds title and content docIDs for two-way merge of two lists of postings lists
+def find_title_and_content_docIDs_for_two_way_merge(lst1: list[Posting], lst2: list[Posting]):
+    common_title_docIDs = []
+    common_content_docIDs = []
+    filtered_lists = filter_two_lists_by_common_docIDs(lst1, lst2)
+    modified_lst1 = filtered_lists[0]
+    modified_lst2 = filtered_lists[1]
+    for item1, item2 in zip(modified_lst1, modified_lst2):
+        merged_title_lst = merge_two_positional_lists(item1.title, item2.title)
+        merged_content_lst = merge_two_positional_lists(item1.content, item2.content)
+        if merged_title_lst != []:
+            common_title_docIDs.append(item1.docID)
+        if merged_content_lst != []:
+            common_content_docIDs.append(item1.docID)
+    return [common_title_docIDs, common_content_docIDs]
 
+# Filters two lists by common docIDs and returns type [list[Posting], list[Posting]]
+def filter_two_lists_by_common_docIDs(lst1: list[Posting], lst2: list[Posting]):
+    modified_lst1 = []
+    modified_lst2 = []
+    for item1 in lst1:
+        for item2 in lst2:
+            if item1.docID == item2.docID:  # Assuming docID is type int 
+                modified_lst1.append(item1)
+                modified_lst2.append(item2)
+    return [modified_lst1, modified_lst2]
+
+# Merge two positional index lists and return a list of positional indices that have two consecutive terms
+def merge_two_positional_lists(lst1, lst2):
+    result = []
+    for item1 in lst1:
+        for item2 in lst2:
+            if item2 == item1 + 1:      # If the positional index in lst2 is exactly one after a positional index 
+                result.append(item2)    # in lst1, then add the second positional index to the result list
+    return result
+
+# Finds title and content docIDs for three-way merge of two lists of postings lists
+def find_title_and_content_docIDs_for_three_way_merge(lst1: list[Posting], lst2: list[Posting], lst3: list[Posting]):
+    common_title_docIDs = []
+    common_content_docIDs = []
+    filtered_lists = filter_three_lists_by_common_docIDs(lst1, lst2, lst3)
+    modified_lst1 = filtered_lists[0]
+    modified_lst2 = filtered_lists[1]
+    modified_lst3 = filtered_lists[2]
+    for item1, item2, item3 in zip(modified_lst1, modified_lst2, modified_lst3):
+        merged_title_lst = merge_three_positional_lists(item1.title, item2.title, item3.title)
+        merged_content_lst = merge_three_positional_lists(item1.content, item2.content, item3.content)
+        if merged_title_lst != []:
+            common_title_docIDs.append(item1.docID)
+        if merged_content_lst != []:
+            common_content_docIDs.append(item1.docID)
+    return [common_title_docIDs, common_content_docIDs]
+
+# Filters three lists by common docIDs and returns type [list[Posting], list[Posting], list[Posting]]
+def filter_three_lists_by_common_docIDs(lst1: list[Posting], lst2: list[Posting], lst3: list[Posting]):
+    modified_lst1 = []
+    modified_lst2 = []
+    modified_lst3 = []
+    for item1 in lst1:
+        for item2 in lst2:
+            for item3 in lst3:
+                if item1.docID == item2.docID and item2.docID == item3.docID:  # Assuming docID is type int 
+                    modified_lst1.append(item1)
+                    modified_lst2.append(item2)
+                    modified_lst3.append(item3)
+    return [modified_lst1, modified_lst2, modified_lst3]
+
+# Merge three positional index lists and return a list of positional indices that have three consecutive terms
+def merge_three_positional_lists(lst1, lst2, lst3):
+    result1 = merge_two_positional_lists(lst1, lst2)
+    result2 = merge_two_positional_lists(result1, lst3)
+    return result2
 
 input_directory = output_file_dictionary = output_file_postings = None
 
