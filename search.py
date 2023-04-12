@@ -35,6 +35,7 @@ def boolean_retrieval(query, s):
     # returns list of docIDs that satisfy the boolean query
     tokens = shlex.split(query) # tokenize the query, i.e. get all phrases and words
 
+    scores = defaultdict(float)
     postings = []
 
     # obtain array of postings lists to merge
@@ -75,8 +76,14 @@ def logical_and(postings_one, postings_two):
     p2 = 0
 
     while p1 != len(postings_one) and p2 != len(postings_two):
-        docID_1 = postings_one[p1].docID
-        docID_2 = postings_two[p2].docID
+        docID_1 = postings_one[p1]
+        docID_2 = postings_two[p2]
+
+        if type(docID_1) != int: # postings list is of the form [(docID, tf, (title_pos), (content_pos))]
+            docID_1 = postings_one[p1].docID
+
+        if type(docID_2) != int: # postings list is of the form [(docID, tf, (title_pos), (content_pos))]
+            docID_2 = postings_two[p2].docID
 
         if docID_1 == docID_2:
             result.append(docID_1)
@@ -120,9 +127,16 @@ def cosine_score(query_vec, s):
             f.seek(pos)
             posting = pickle.load(f)
 
-        # take care of zone weighting here (check if title_pos or zone_pos is empty)
-            for doc, tf, title_pos, zone_pos in posting:
-                w_td = 1 + math.log(tf, 10)     # calculate log tf for document
+            for doc, tf, title_pos, content_pos in posting:
+                # check if term is in title, content,or both
+                if title_pos[0] == None:
+                    multiplier = 1
+                elif content_pos[0] == None:
+                    multiplier = 0.8
+                else:
+                    multiplier = 1.3
+
+                w_td = (1 + math.log(tf, 10)) * multiplier     # calculate log tf for document and multiply by zone factor
                 scores[doc] += (w_td * query_vec[t])
 
     for d, score in scores.items():
@@ -133,8 +147,8 @@ def cosine_score(query_vec, s):
     res2 = [] # get all docIDs with scores > 0
 
     for docID, score in res:
-        if score == 0:
-            break
+        if score == 0: 
+            break # only return docIDs with scores > 0
         else:
             res2.append(docID)
 
@@ -149,7 +163,7 @@ def run_search(dict_file, postings_file, queries_file, results_file):
     perform searching on the given queries file and output the results to a file
     """
 
-    # load dictionary into memory
+    # load dictionary into memory2
     with open(dict_file, 'rb') as f:
         dictionary = pickle.load(f)
 
