@@ -25,6 +25,7 @@ from itertools import islice
 DOCIDS_FILENAME = 'doc-ids.txt'
 DOC_LEN_FILENAME = 'doc-len.txt'
 DOC_VECTORS_FILENAME = 'doc-vector.txt'
+ID_TERM_MAP_FILENAME = 'id-term-map.txt'
 
 
 class Zone(Enum):
@@ -66,7 +67,9 @@ def invert(block, termIdMap):
         df = len(positions[Zone.TITLE]) + len(positions[Zone.CONTENT])
 
         res[termID].append(
-            Posting(int(docID), df, positions[Zone.TITLE], positions[Zone.CONTENT]))
+            (int(docID), df,
+             tuple(positions[Zone.TITLE]) if positions[Zone.TITLE] else None,
+             tuple(positions[Zone.CONTENT]) if positions[Zone.CONTENT] else None))
 
     return res
 
@@ -89,7 +92,7 @@ def post_processing(termIdMap, block):
     return od, res_postings
 
 
-def calc_tf(dictionary, docIDs, docsTermToCount):
+def calc_tf(dictionary, docIDs, docsTermToCount, termIdMap):
     # dictionary: <key=term, val=(df, ptr_to_postings)>
     print(f'Calculating document vectors: printing progress updates:')
     vectorDocLen = {}
@@ -104,7 +107,8 @@ def calc_tf(dictionary, docIDs, docsTermToCount):
         for term in dictionary.keys():
             # 1 + log10(tf) if tf > 0
             if term in termToCount:
-                vec[term] = 1 + math.log(termToCount[term], 10)
+                vec[termIdMap.getID(term)] = 1 + \
+                    math.log(termToCount[term], 10)
             # 0 otherwise, don't add to vec
 
         res = 0
@@ -211,20 +215,24 @@ def build_index(in_dir, out_dict, out_postings):
 
     # calculate LENGTHS[N], which is length of each document vector
     # and write out to file for search step
-    vectorDocLen, docVec = calc_tf(dictionary, docIDs, docsTermToCount)
+    vectorDocLen, docVec = calc_tf(
+        dictionary, docIDs, docsTermToCount, termIdMap)
     with open(DOC_LEN_FILENAME, 'wb') as f:
         pickle.dump(vectorDocLen, f)
 
     with open(DOC_VECTORS_FILENAME, 'wb') as f:
         pickle.dump(docVec, f)
 
+    with open(ID_TERM_MAP_FILENAME, 'wb') as f:
+        pickle.dump(termIdMap.idToTerm, f)
+
     # DEBUG: print postings list
     with open(out_dict, 'rb') as f:
         d = pickle.load(f)
         # print(f'loaded dictionary {d}')
         n_items = list(islice(d.items(), 10))
-        print(f'Loaded dictionary sample for first 10 items{n_items}')
-        print('\n\n\n')
+        print('')
+        print(f'>>> Loaded dictionary sample for first 10 items{n_items}\n')
         with open(out_postings, 'rb') as f:
             print(">>> Printing first 10 loaded postings")
             i = 0
