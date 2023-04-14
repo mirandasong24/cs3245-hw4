@@ -19,6 +19,7 @@ import shutil
 import csv
 from enum import Enum
 from itertools import islice
+import lzma
 
 
 # temp file to store full-list of docIds to be used in search
@@ -141,7 +142,7 @@ def build_index(in_dir, out_dict, out_postings):
         csv_reader = csv.reader(csv_file, delimiter=',')
         i = 0
         for row in csv_reader:
-            if i > 10:            # DEBUG: change for however many documents
+            if i > 100:            # DEBUG: change for however many documents
                 break
             doc.append(row)
             i += 1
@@ -197,7 +198,7 @@ def build_index(in_dir, out_dict, out_postings):
 
     print("Writing out postings and dictionary")
     # write out postings
-    with open(out_postings, 'wb') as f:
+    with lzma.open(out_postings, "wb") as f:
         for entry in postings:
             indices.append(f.tell())
             pickle.dump(entry, f)
@@ -233,7 +234,7 @@ def build_index(in_dir, out_dict, out_postings):
         n_items = list(islice(d.items(), 10))
         print('')
         print(f'>>> Loaded dictionary sample for first 10 items{n_items}\n')
-        with open(out_postings, 'rb') as f:
+        with lzma.open(out_postings, 'rb') as f:
             print(">>> Printing first 10 loaded postings")
             i = 0
             for key, value in dictionary.items():
