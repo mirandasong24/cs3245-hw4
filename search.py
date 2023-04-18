@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-import re
 import nltk
 import sys
 import getopt
@@ -8,7 +7,9 @@ from collections import defaultdict
 import collections
 import math
 from nltk.stem.porter import *
-import shlex
+import lzma
+from nltk.corpus import wordnet
+import ssl
 
 
 DOC_LEN_FILENAME = 'doc-len.txt'
@@ -35,13 +36,13 @@ def usage():
     
 def fetch_postings(token, s):
     _, pos = s.dictionary[token]
-    with open(s.FILENAME_POSTINGS, 'rb') as f:
+    with lzma.open(s.FILENAME_POSTINGS, 'rb') as f:
         f.seek(pos)
             
         return pickle.load(f)
     
     
-def boolean_retrieval(query, s):
+'''def boolean_retrieval(query, s):
     # returns list of docIDs that satisfy the boolean query
     tokens = shlex.split(query) # tokenize the query, i.e. get all phrases and words
 
@@ -200,7 +201,7 @@ def filter_three_lists_by_common_docIDs(lst1, lst2, lst3):
 def merge_three_positional_lists(lst1, lst2, lst3):
     result1 = merge_two_positional_lists(lst1, lst2)
     result2 = merge_two_positional_lists(result1, lst3)
-    return result2
+    return result2 '''
 
 
 def get_w_tq(t, count, s):
@@ -217,7 +218,39 @@ def get_w_tq(t, count, s):
     return w_tq
 
 
-def cosine_score(query_vec, s):
+def cosine_score(tokens, s):
+    scores = defaultdict(float)
+    uniqueTokens = set(tokens)
+    count = collections.Counter(tokens)
+
+    # loop through all query terms
+    for t in uniqueTokens:
+        if t not in s.dictionary:
+            # if term not found, continue to next term
+            continue
+
+        # calculate w(t,q)
+        w_tq = get_w_tq(t, count, s)
+
+        # fetch postings list for t
+        posting = fetch_postings(t, s)
+
+        for doc, tf, title_pos, content_pos in posting:
+            w_td = 1 + math.log(tf, 10)     # calculate log tf for document
+            scores[doc] += (w_td * w_tq)
+
+    for d, score in scores.items():
+        scores[d] = score/s.length[d]
+
+    # sort by decreasing value (score) and then increasing key (docID)
+    res = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
+    res = [x[0] for x in res[:15000]]
+    # for d in res:
+    #     print(f'document {d} has score {scores[d]}')
+    return res
+
+
+''' def cosine_score(query_vec, s):
     scores = defaultdict(float)
     uniqueTokens = query_vec.keys()
 
@@ -227,7 +260,7 @@ def cosine_score(query_vec, s):
             # if term not found, continue to next term
             continue
 
-        posting = fetch_postings(t,s)
+        posting = fetch_postings(t, s)
 
         for doc, tf, title_pos, content_pos in posting:
             # check if term is in title, content, or both
@@ -236,7 +269,7 @@ def cosine_score(query_vec, s):
             elif content_pos == None:
                 multiplier = 0.8
             else:
-                multiplier = 1.3
+                multiplier = 1.2
 
             w_td = (1 + math.log(tf, 10)) * multiplier     # calculate log tf for document and multiply by zone factor
             scores[doc] += (w_td * query_vec[t])
@@ -249,8 +282,30 @@ def cosine_score(query_vec, s):
 
     # for d in res:
     #     print(f'document {d} has score {scores[d]}')
-    res = [docID for docID, score in res]
-    return res
+    res = [x[0] for x in res[:800]]
+    return res '''
+
+def wordnet_rf(tokens):
+    # takes tokens from og query, finds related words and adds them to the original query to produce a new query
+    count = 0
+    synonyms = []
+
+    for word in tokens:
+        if word == "AND":
+            continue
+        else:
+            for syn in wordnet.synsets(word):
+                for l in syn.lemmas():
+                    if count < 3:
+                        if l.name() not in synonyms:
+                            synonyms.append(l.name())
+                            count += 1
+
+        count = 0
+    
+    tokens.extend(synonyms)
+
+    return tokens
 
 
 def run_search(dict_file, postings_file, queries_file, results_file):
@@ -258,6 +313,14 @@ def run_search(dict_file, postings_file, queries_file, results_file):
     using the given dictionary file and postings file,
     perform searching on the given queries file and output the results to a file
     """
+    try:
+        _create_unverified_https_context = ssl._create_unverified_context
+    except AttributeError:
+        pass
+    else:
+        ssl._create_default_https_context = _create_unverified_https_context
+
+    nltk.download('wordnet')
 
     # load dictionary into memory2
     with open(dict_file, 'rb') as f:
@@ -292,53 +355,51 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         relevant_docs = f.readlines()
         results = []
 
-        # check if query is boolean or free text
-        if "AND" in query:
-            results = boolean_retrieval(query, search)
-        else:
-            # compute centroid of relevant documents
-            centroid_vec = {}
+        # results = boolean_retrieval(query, search)
 
-            for doc in relevant_docs:
-                for termID, weight in search.doc_vectors[int(doc.strip())].items():
-                    term = search.term_map[termID]
-                    centroid_vec.update({term: centroid_vec.get(term, 0) + weight}) 
-            
-            # divide centroid term weights by number of relevant docs
-            for term, weight in centroid_vec.items():
-                centroid_vec[term] = weight / len(relevant_docs)
+        terms = (query.replace('"', '')).split() # split up phrasal queries
+        tokens = []
         
-            # compute initial query vector 
-            query_vec = {}
-
-            # split query by whitespace
-            terms = query.split()
-            tokens = []
-
-            # apply stemming as documents
-            for term in terms:
+        for term in terms:
+            if term == "AND":
+                continue
+            else:
                 term = term.lower()
-                stemmer = PorterStemmer()                           # apply stemming
+                stemmer = PorterStemmer()                           
                 tokens.append(stemmer.stem(term))
-            
-            count = collections.Counter(tokens) # get term frequency in query
-            # try:
-            
-            for term in tokens:
-                query_vec[term] = get_w_tq(term, count, search)
 
-            # compute modified query based on rocchio formula
-            modified_query_vec = {}
+        tokens = wordnet_rf(tokens)
+    
+        ''' # compute initial query vector 
+        query_vec = {}
+        
+        count = collections.Counter(tokens) # get term frequency in query
+        # try:
+        
+        for token in tokens:
+            query_vec[term] = get_w_tq(token, count, search)
 
-            for term in set().union(query_vec, centroid_vec): # union of terms in query and centroid vectors
-                modified_query_vec[term] = (query_vec.get(term, 0) * 0.7) + (centroid_vec.get(term, 0) * 0.3)
+        # compute centroid of relevant documents
+        centroid_vec = {}
 
-            results = cosine_score(modified_query_vec, search)
+        for doc in relevant_docs:
+            for termID, weight in search.doc_vectors[int(doc.strip())].items():
+                term = search.term_map[termID]
+                centroid_vec.update({term: centroid_vec.get(term, 0) + weight}) 
+        
+        # divide centroid term weights by number of relevant docs
+        for term, weight in centroid_vec.items():
+            centroid_vec[term] = weight / len(relevant_docs)
 
-            # except KeyError as err:
-            #     # invalid query
-            #     r.write(f'\n')
-            #     continue
+        # compute modified query based on rocchio formula
+        modified_query_vec = {}
+
+        for term in set().union(query_vec, centroid_vec): # union of terms in initial query and centroid vectors
+            modified_query_vec[term] = (query_vec.get(term, 0) * 0.85) + (centroid_vec.get(term, 0) * 0.15) '''
+
+        results = cosine_score(tokens, search)
+
+        # results = cosine_score(tokens, search)
 
         # format output postings list
         resStr = ' '.join([str(x) for x in results])
