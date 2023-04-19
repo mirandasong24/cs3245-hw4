@@ -26,22 +26,38 @@ tuples instead of lists and the dictionary used term-id as the key instead of th
 2. Search
 For search, both free text and boolean queries are handled the same way, specifically,
 tokens are extracted from the query, and the TF×IDF score is calculated. Zone information in regards to Title 
-and Content is handled here by using a multiplier on each w_td , where a term in both > term in Title > term in Content. 
+and Content is handled here by using a multiplier on each w_td, where a term in both Title and Content is given
+a higher multiplier than term in Title, followed by term in Content. 
 
 Previously, boolean retrieval and positional indices was implemented for boolean queries
 (see `boolean_retrieval()` in search.py). However, we found that this implementation did not
 outperform treating boolean queries as a free text query.
 
 3. Query Refinement (RF)
+Two query refinement techniques, the Rocchio formula and manually compiled ontology (Wordnet) were tested
+in our implementation to potentially improve the results of searching. Our final implementation uses Wordnet 
+to perform query refinement instead of the Rocchio formula. More information can be found in our BONUS.docx file.
 
+Work Allocation:
+A0267998W was responsible for modifying the code in index.py to support the change in input format (csv) as
+well as ensuring that the zone information (title and content) and term positions were captured in the new 
+postings list format. They also worked on achieving a reasonable index size through index compression.
 
+A0267993E worked on handling phrasal queries by using the information in the positional indices in the
+postings list to merge and return a list of document IDs with the phrase in the title or content of
+the document.
+
+A0267818M was responsible for query refinement. They modified code from hw3 to support the new index
+format, modified code from hw2 to handle boolean queries (this was later commented out as treating boolean
+queries as free text instead of in a strict boolean sense performed better) and tested several query refinement 
+techniques, namely using the Rocchio formula and manually created ontology (Wordnet). 
 
 
 == Files included with this submission ==
 
 README.txt - contains information about the submission
 index.py - contains the logic for indexing
-search.py - contains the logic for searching the index and ranking document similarity
+search.py - contains the logic for searching the index and processing queries
 dictionary.txt - contains the dictionary that includes each term, pointer to postings list (byte location), and doc frequency
 postings.txt - contains the postings lists, one right after the other
 doc-len.txt - contains document lengths for each document
@@ -71,17 +87,5 @@ We suggest that we should be graded as follows:
 == References ==
 
 Stack Overflow - Looking up syntax for working with files/dictionaries in Python
+nltk.org - Wordnet documentation
 Piazza - Posted questions online and used answers from prof, tutors, and peers
-
-THINGS TO DO
--figure out how to handle csv files in Python
--figure out how to handle both free text and boolean queries (only AND)
-
-THINGS TO INCLUDE 
--ability to handle phrasal queries (using n-word indices or positional indices)
-     -store the positions of each term in the document (something like docID:position_list) and then when retrieving the postings lists for the phrase, use the AND operator to find documents that contain all the words in the phrase and then implement the added step of checking whether the words exist in the correct position/order in those documents
--handle zones/fields (along with the standard notion of a document as a ordered set of words)
-     -ex. increase the weighting of a query term if it's found in the title of a document
--at least one query refinement technique (ex. psuedo relevant feedback, query expansion)
-     -use relevant documents given under the query to compute the centroid of these documents. then use the rocchio formula to recompute the term      weightings of the query vector (play around with the coefficients)
--unique or unusual ideas to improve the system (make sure to document the ideas and their performance)
