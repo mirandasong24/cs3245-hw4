@@ -3,10 +3,39 @@ Email(s): e1100338@u.nus.edu, e1100705@u.nus.edu, e1100710@u.nus.edu
 
 == Python Version ==
 
-I'm (We're) using Python Version 3.9.13 for
+We're using Python Version 3.8.10 for
 this assignment.
 
 == General Notes about this assignment ==
+
+The main parts of the project are indexing, search, and query refinement.
+
+1. Indexing
+The main indexing algorithm follows from hw3, where we collect 
+(term-id, doc-id) pairs to create a dictionary and postings file.
+One major change is the format of the postings list. 
+In order to store positional indexing for phrasal queries as well as 
+encode zone information regarding `Title` and `Content`, each entry in the
+postings list is a tuple of (docID, df, tuple of positional indices where term is in zone `Title`, 
+tuple of positional indices where term is in zone `Content`).
+
+Compression:
+To shrink the size of the indexing output files, the postings list used 
+tuples instead of lists and the dictionary used term-id as the key instead of the whole term.
+
+2. Search
+For search, both free text and boolean queries are handled the same way, specifically,
+tokens are extracted from the query, and the TF×IDF score is calculated. Zone information in regards to Title 
+and Content is handled here by using a multiplier on each w_td , where a term in both > term in Title > term in Content. 
+
+Previously, boolean retrieval and positional indices was implemented for boolean queries
+(see `boolean_retrieval()` in search.py). However, we found that this implementation did not
+outperform treating boolean queries as a free text query.
+
+3. Query Refinement (RF)
+
+
+
 
 == Files included with this submission ==
 
@@ -15,7 +44,10 @@ index.py - contains the logic for indexing
 search.py - contains the logic for searching the index and ranking document similarity
 dictionary.txt - contains the dictionary that includes each term, pointer to postings list (byte location), and doc frequency
 postings.txt - contains the postings lists, one right after the other
-document_lengths.txt - contains document lengths for each document
+doc-len.txt - contains document lengths for each document
+doc-vector.txt - contains document vector for each document, used for Relevant Feedback
+id-term-map.txt - contains mapping of term id -> term.
+
 
 == Statement of individual work ==
 
